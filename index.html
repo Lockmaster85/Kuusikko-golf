@@ -1350,7 +1350,7 @@ function doHit(power,e){
     S.shotInfo={before:expected(S.last.x,S.last.y),surf:s0,dist:d0,putt:!!c.putt,bonus,pen:false};
     S.glow=false;
   }
-  S.state='swing';S.firstLand=true;S.shotUsed=S.shot;S.shot='normal';S.spinMode='none';
+  S.state='swing';S.firstLand=true;S.dry={x:S.ball.x,y:S.ball.y};S.shotUsed=S.shot;S.shot='normal';S.spinMode='none';
   S.pendingRate=rateFromSim(simulateShot()); // lopputulos lasketaan etukäteen, jotta palaute tulee heti lyönnin lähtiessä
   shotUI();hud();
 }
@@ -1525,6 +1525,7 @@ function treeCollide(b){
 }
 function penalty(msg){
   if(S.sim){S.simEnd='pen';S.state='simdone';return}
+  if(msg==='Vesieste'&&typeof waterRelief==='function'&&S.dry)return waterRelief();
   const b=S.ball;Object.assign(b,{x:S.last.x,y:S.last.y,h:terrain(S.last.x,S.last.y),vx:0,vy:0,vh:0,air:false});S.strokes++;
   if(S.shotInfo)S.shotInfo.pen=true;if(msg==='Vesieste')SND.splash();S.state='settle';S.timer=1.2;toast(msg,'Rangaistuslyönti +1, lyö uudelleen samasta paikasta',1800);
 }
@@ -1536,6 +1537,7 @@ function holed(){
 }
 function physStep(dt){
   const b=S.ball;
+  if(!S.sim&&S.dry&&surf(b.x,b.y)!=='water')S.dry.x=b.x,S.dry.y=b.y; // viimeinen kohta ennen vesiestettä (pudotussääntöjä varten)
   if(b.air){
     const rx=b.vx-S.wind.x*S.windK,ry=b.vy-S.wind.y*S.windK,sp=Math.hypot(rx,ry,b.vh);
     b.vx+=(-K*sp*rx+S.side.x)*dt;b.vy+=(-K*sp*ry+S.side.y)*dt;b.vh+=(-G-K*sp*b.vh)*dt;
@@ -1635,6 +1637,36 @@ function update(dt){
   }else if(S.state==='settle'){S.timer-=dt;if(S.timer<=0)afterStop()}
   else if(S.state==='holed'){S.timer-=dt;if(S.timer<=0){S.state='done';finishHole()}}
   meterUI();setHit();
+}
+// ---------- vesieste (sääntö 17): rangaistuslyönti +1 ja kolme vaihtoehtoa jatkaa ----------
+// 1) sivupudotus kahden mailanmitan päähän esteeseen menokohdasta, ei lähemmäs reikää
+// 2) pudotus taaksepäin lipun ja menokohdan kautta kulkevalla linjalla esteen taakse
+// 3) lyönti uudelleen edellisestä paikasta
+const LIESC={fairway:4,tee:4,green:4,rough:2,sand:1};
+function waterRelief(){
+  const b=S.ball,W={x:b.x,y:b.y};SND.splash();S.strokes++;if(S.shotInfo)S.shotInfo.pen=true;
+  // menokohta esteen reunalla: puolitushaku viimeisen kuivan kohdan ja vesikohdan välillä
+  let A={...S.dry},B=W;for(let k=0;k<14;k++){const m={x:(A.x+B.x)/2,y:(A.y+B.y)/2};surf(m.x,m.y)==='water'?B=m:A=m}const E=A;
+  const pin={x:H.pin[0],y:H.pin[1]},dE=Math.hypot(E.x-pin.x,E.y-pin.y),ok=(x,y)=>{const s=surf(x,y);return s!=='water'&&s!=='ob'};
+  let side=null;
+  for(const r of [1.1,1.7,2.2])for(let k=0;k<36;k++){const a=k/36*6.2832,x=E.x+Math.cos(a)*r,y=E.y+Math.sin(a)*r;
+    if(!ok(x,y)||Math.hypot(x-pin.x,y-pin.y)<dE-.01)continue;const sc=(LIESC[surf(x,y)]||1)*10-Math.hypot(x-pin.x,y-pin.y)*.01-r*.5;
+    if(!side||sc>side.sc)side={x,y,sc}}
+  let back=null;const ux=(E.x-pin.x)/(dE||1),uy=(E.y-pin.y)/(dE||1);
+  for(let t=.5;t<400;t+=.5){const x=E.x+ux*t,y=E.y+uy*t;if(surf(x,y)==='ob')break;
+    if(ok(x,y)){const x2=x+ux*1.2,y2=y+uy*1.2;back=ok(x2,y2)?{x:x2,y:y2}:{x,y};break}}
+  if(back&&Math.hypot(back.x-S.last.x,back.y-S.last.y)<1.5)back=null; // sama kuin edellinen paikka
+  Object.assign(b,{x:S.last.x,y:S.last.y,h:terrain(S.last.x,S.last.y),vx:0,vy:0,vh:0,air:false});S.state='drop';saveRound();
+  const info=P=>{const sN=SURF[surf(P.x,P.y)];return `${sN?sN.n.toLowerCase():''} · ${Math.round(Math.hypot(P.x-pin.x,P.y-pin.y))} m lippuun`};
+  const opts=[side&&['side','Pudota sivulle','Enintään kaksi mailanmittaa kohdasta, jossa pallo meni esteeseen, ei lähemmäs reikää',side],
+    back&&['back','Pudota taaksepäin linjalla','Lipun ja esteeseen menokohdan kautta kulkevalla linjalla esteen takana',back],
+    ['again','Lyö uudelleen edellisestä paikasta','Pallo samaan kohtaan, josta lyönti lähti',{x:S.last.x,y:S.last.y}]].filter(Boolean);
+  setTimeout(()=>{if(S.state!=='drop')return;
+    showOverlay(`<h2>Vesieste</h2><p style="text-align:center;margin:0">Rangaistuslyönti +1. Valitse, mistä jatkat.</p>
+     <div class="courses">${opts.map(o=>`<button class="course" type="button" data-o="${o[0]}"><b>${o[1]}</b><span>${o[2]}<br>${info(o[3])}</span></button>`).join('')}</div>`);
+    $('card').querySelectorAll('[data-o]').forEach(btn=>btn.onclick=()=>{const o=opts.find(q=>q[0]===btn.dataset.o),P=o[3];
+      Object.assign(b,{x:P.x,y:P.y,h:terrain(P.x,P.y),vx:0,vy:0,vh:0,air:false});hideOverlay();S.state='settle';S.timer=.15;snapCamera();
+      toast(o[1],info(P),1600)})},900);
 }
 function afterStop(){
   if(S.strokes>=MAXST){S.state='done';finishHole(true);return}
