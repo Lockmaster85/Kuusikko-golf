@@ -199,6 +199,9 @@ button:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .chc.off .stats,.chc.off .tr{opacity:.45}
 .chc[aria-pressed=true]{border-color:#2f7a43;background:#eef6ea;box-shadow:0 0 0 2px rgba(47,122,67,.25)}
 @media (max-width:420px){.btabs{padding:0 6px 0 16px;gap:3px}.btabs button{font-size:12px;letter-spacing:0;padding:9px 2px 12px}.pg{padding:14px 14px 18px 26px}.pg::before{left:9px}.bkh h1{font-size:26px}}
+.cont{display:flex;flex-direction:column;align-items:flex-start;gap:3px;width:100%;padding:12px 14px;border-radius:12px;border:2px solid #2f7a43;background:#2f7a43;color:#fff8e8;text-align:left;box-shadow:0 3px 0 #1f5530}
+.cont b{font:800 20px/1 var(--display);letter-spacing:.03em;text-transform:uppercase}.cont span{font-size:12.5px;opacity:.92}
+.cont:hover{background:#358a4b}
 .optgrp{font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#7a6f52;margin-top:10px}
 [hidden]{display:none!important}
 .balls{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px;margin-top:6px}
@@ -1268,7 +1271,7 @@ function loadHole(i){
   buildHole();trailClear();
   readyShot(true);endFree(true);S.fly=null;snapCamera();hideOverlay();setTimeout(()=>{if(S.hole===i&&S.strokes===0&&OPT.fly)startFly()},60);
   toast(`${GAME.mode==='duo'?GAME.players[GAME.cur].name+' · ':''}Väylä ${i+1}${H.name?' · '+H.name:''}`,`Par ${H.par} · ${H.m||Math.round(H.len)} m${H.hcp?' · HCP '+H.hcp:''}`,2400);
-  placeFuji();
+  placeFuji();saveRound();
 }
 function readyShot(first){
   const b=S.ball;
@@ -1639,7 +1642,7 @@ function afterStop(){
   if(WORLD){const j=worldRelief();if(j>=0)note=['Väärä griini','Vapaa pudotus griinin ulkopuolelle (väylän '+(j+1)+' griini)'];
     if(worldNeedsRegion(S.ball.x,S.ball.y)){worldExtend(S.ball.x,S.ball.y);buildHole()}
     if(!note){const o=ownerAt(S.ball.x,S.ball.y);if(o>=0&&o!==S.hole)note=['Väylän '+(o+1)+' alueella','Pelaa takaisin kohti omaa lippua']}}
-  readyShot(false);const s=surf(S.ball.x,S.ball.y);
+  readyShot(false);saveRound();const s=surf(S.ball.x,S.ball.y);
   if(note)toast(note[0],note[1],2000);else if(s==='rough'||s==='sand')toast(SURF[s].n,'',1000);
 }
 
@@ -2072,6 +2075,7 @@ function finishHole(capped){
   if(GAME.mode==='cpu'&&GAME.cpu[i]==null)GAME.cpu[i]=cpuScore(H);
   const duoFirst=GAME.mode==='duo'&&GAME.cur===0,last=i===HOLES.length-1;
   const done=!duoFirst&&last&&S.scores.filter(v=>v!=null).length===HOLES.length;
+  if(done||(!duoFirst&&last))clearRound();else saveRound(duoFirst?{hole:i,cur:1}:{hole:i+1,cur:0});
   let tot=0,par=0;S.scores.forEach((v,j)=>{if(v!=null){tot+=v;par+=HOLES[j].par}});
   let extra='';
   const perfLine=done&&S.roundFull?`<p style="text-align:center;margin:0">Täydellisiä osumia ${S.roundPerfect||0}/${S.roundFull} · pisin putki ${SAVE.bestStreak}</p>`:'';
@@ -2100,7 +2104,8 @@ function intro(tab,turn){
   const chars=['robot','rogue','brute','warrok','ch06','goose'].map(id=>[id,CHARS[id].n]);
   const cur=SAVE.char||'robot';
   let page='';
-  if(T==='play')page=`<h3 class="pgh">Pelimuoto</h3>${seg('mode',[['solo','Yksin'],['duo','Kaveria vastaan'],['cpu','Tietokonetta vastaan']],GAME.mode)}
+  const RS=T==='play'?loadRound():null;
+  if(T==='play')page=`${RS?`<button class="cont" id="oCont" type="button"><b>Jatka kierrosta</b><span>${roundInfo(RS)}</span></button>`:''}<h3 class="pgh">${RS?'Tai aloita uusi: pelimuoto':'Pelimuoto'}</h3>${seg('mode',[['solo','Yksin'],['duo','Kaveria vastaan'],['cpu','Tietokonetta vastaan']],GAME.mode)}
    <div id="diffRow" ${GAME.mode==='cpu'?'':'hidden'}>${seg('diff',Object.entries(CPU).map(([k,v])=>[k,v.n]),GAME.diff)}</div>
    <p class="note" id="modeNote">${{solo:'Pelaa omaa ennätystäsi vastaan.',duo:'Pelatkaa vuorotellen samalla laitteella: pelaaja 1 pelaa väylän, sitten pelaaja 2.',cpu:'Tietokone pelaa jokaisen väylän rinnallasi. Tulos näkyy, kun olet pelannut väylän.'}[GAME.mode]}</p>
    <h3 class="pgh">Valitse rata</h3>
@@ -2124,6 +2129,7 @@ function intro(tab,turn){
   $('card').querySelectorAll('.ballc[data-b]').forEach(b=>b.onclick=()=>{SAVE.ball=b.dataset.b;persist();applyBall();intro()});
   $('card').querySelectorAll('.chc').forEach(b=>b.onclick=()=>{SAVE.char=b.dataset.c;persist();applyTraits();GOLF.setChar(SAVE.char);const y=$('card').querySelector('.pg').scrollTop;intro();$('card').querySelector('.pg').scrollTop=y});
   $('card').querySelectorAll('.ballc[data-t]').forEach(b=>b.onclick=()=>{SAVE.tracer=b.dataset.t;persist();intro()});
+  if($('oCont'))$('oCont').onclick=continueRound;
   if($('oPickI'))$('oPickI').onclick=()=>{S.fromIntro=true;holePicker()};
   if(T==='opts')bindOpts();
 }
@@ -2160,13 +2166,37 @@ function pauseMenu(){
   $('mCard').onclick=()=>{showOverlay(`<h2 style="color:#1f4d2c">Tuloskortti</h2>${table()}${vsLine(false)}<div class="btnrow"><button class="cbtn" id="mBack" type="button">Takaisin</button></div>`);$('mBack').onclick=pauseMenu};
   $('mHome').onclick=()=>{const played=S.scores.filter(v=>v!=null).length;
     showOverlay(`<h2 style="color:#1f4d2c">Lopetetaanko kierros?</h2>
-     <p style="text-align:center">${played?`Olet pelannut ${played} väylää. Keskeneräinen kierros ei tallennu tulostauluun, mutta väyläkohtaiset ennätyksesi ja avatut pallot säilyvät.`:'Palaat päävalikkoon.'}</p>
+     <p style="text-align:center">${played?`Olet pelannut ${played} väylää. Kierros tallentuu tälle laitteelle, ja voit jatkaa sitä myöhemmin Pelaa-sivulta.`:'Palaat päävalikkoon.'}</p>
      <div class="btnrow"><button class="cbtn" id="mYes" type="button">Lopeta ja palaa päävalikkoon</button><button class="cbtn alt" id="mNo" type="button">Peruuta</button></div>`);
-    $('mYes').onclick=()=>{S.paused=false;resetRound();S.state='idle';intro()};$('mNo').onclick=pauseMenu};
+    $('mYes').onclick=()=>{S.paused=false;if(S.state==='idle'||S.state==='ready')saveRound();resetRound();S.state='idle';intro('play')};$('mNo').onclick=pauseMenu};
 }
 function resume(){S.paused=false;hideOverlay()}
 $('holesBtn').onclick=pauseMenu;
-function startCourse(k){S.fromIntro=false;COURSE=COURSES[k];HOLES=COURSE.holes;resetRound();loadHole(0)}
+function startCourse(k){S.fromIntro=false;clearRound();COURSE=COURSES[k];HOLES=COURSE.holes;resetRound();loadHole(0)}
+// ---------- keskeneräisen kierroksen tallennus: tallentuu tälle laitteelle aina, kun pallo pysähtyy tai väylä vaihtuu ----------
+const RKEY='kg-round';
+function loadRound(){try{const r=JSON.parse(localStorage.getItem(RKEY)||'null');return r&&r.v===1&&COURSES[r.course]&&COURSES[r.course].holes[r.hole]?r:null}catch(e){return null}}
+function clearRound(){try{localStorage.removeItem(RKEY)}catch(e){}}
+function saveRound(next){ // next = {hole,cur}: väylä valmis, seuraava aloitetaan tiiltä
+  const k=courseKey();if(!k)return;const b=S.ball,mid=!next&&S.strokes>0;
+  const r={v:1,t:Date.now(),course:k,mode:GAME.mode,diff:GAME.diff,cur:next?next.cur:GAME.cur,hole:next?next.hole:S.hole,
+    p:GAME.players.map(p=>p.scores.slice()),cpu:GAME.cpu.slice(),strokes:mid?S.strokes:0,
+    ball:mid?{x:b.x,y:b.y}:null,last:mid?{x:S.last.x,y:S.last.y}:null,wind:next?null:{a:S.wind.a,s:S.wind.s},
+    st:{rp:S.roundPerfect||0,rf:S.roundFull||0,sk:S.streak||0,sr:S.straightRun||0}};
+  try{localStorage.setItem(RKEY,JSON.stringify(r))}catch(e){}}
+function roundInfo(r){const C=COURSES[r.course],sc=r.p[r.cur]||[];let d=0,n=0;sc.forEach((v,i)=>{if(v!=null){d+=v-C.holes[i].par;n++}});
+  const ago=Math.round((Date.now()-r.t)/60000),when=ago<2?'juuri äsken':ago<60?ago+' min sitten':ago<1440?Math.round(ago/60)+' h sitten':Math.round(ago/1440)+' pv sitten';
+  return `${C.name} · väylä ${r.hole+1}${r.strokes?' · lyönti '+(r.strokes+1):''}${n?' · '+fmtD(d):''}${r.mode==='duo'?' · '+GAME.players[r.cur].name:''} · ${when}`}
+function continueRound(){const r=loadRound();if(!r){intro('play');return}
+  S.fromIntro=false;COURSE=COURSES[r.course];HOLES=COURSE.holes;GAME.mode=r.mode;GAME.diff=r.diff;resetRound();
+  GAME.players.forEach((p,i)=>p.scores=(r.p[i]||[]).slice());GAME.cpu=(r.cpu||[]).slice();setPlayer(r.cur);
+  S.roundPerfect=r.st.rp;S.roundFull=r.st.rf;S.streak=r.st.sk;S.straightRun=r.st.sr;
+  loadHole(r.hole);
+  if(r.wind){const s=OPT.wind?r.wind.s:0;S.wind={a:r.wind.a,s,x:Math.sin(r.wind.a)*s,y:Math.cos(r.wind.a)*s};SND.wind=s}
+  if(r.strokes&&r.ball){S.strokes=r.strokes;endFly();Object.assign(S.ball,{x:r.ball.x,y:r.ball.y,h:terrain(r.ball.x,r.ball.y),vx:0,vy:0,vh:0,air:false});S.last=r.last||{x:0,y:0};
+    if(WORLD&&worldNeedsRegion(S.ball.x,S.ball.y)){worldExtend(S.ball.x,S.ball.y);buildHole();S.ball.h=terrain(S.ball.x,S.ball.y)}
+    readyShot(false);snapCamera()}
+  saveRound();hud();toast('Kierros jatkuu',roundInfo(r).replace(/ · [^·]*$/,''),2200)}
 
 // ---------- yhteinen tulostaulu (näkyy kaikille, joille sivu on jaettu) ----------
 const BOARD={db:null,user:null,uid:null,rows:[],ready:false};
